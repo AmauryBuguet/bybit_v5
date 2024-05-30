@@ -1,4 +1,4 @@
-/// Enumeration of supported sides for queries to the Bybit API.
+/// Enumeration of supported option types for queries to the Bybit API.
 enum OptionType {
   call("Call"),
   put("Put");

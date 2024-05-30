@@ -1,9 +1,9 @@
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 
 import '../bybit_v5.dart';
-import 'models/enums/option_type.dart';
 
 /// A class to interact with the Bybit API.
 ///
@@ -34,6 +34,22 @@ class BybitApi {
   ///
   /// The [apiKey] and [apiSecret] are required for authenticated API calls.
   BybitApi.authenticated({required this.apiKey, required this.apiSecret}) : isAuthenticated = true;
+
+  /// Generate headers for signed requests
+  Map<String, String> _generateHeaders(String recvWindow, String body) {
+    final timestamp = DateTime.now().millisecondsSinceEpoch.toString();
+    final String signaturePayload = apiKey! + timestamp + recvWindow + body;
+    final hmacSha256 = Hmac(sha256, utf8.encode(apiSecret!));
+    final signature = hmacSha256.convert(utf8.encode(signaturePayload)).toString();
+
+    return {
+      'Content-Type': 'application/json',
+      'X-BAPI-SIGN': signature,
+      'X-BAPI-API-KEY': apiKey!,
+      'X-BAPI-TIMESTAMP': timestamp,
+      'X-BAPI-RECV-WINDOW': recvWindow,
+    };
+  }
 
   /// Fetches the server time from the Bybit API.
   ///
@@ -126,15 +142,83 @@ class BybitApi {
     }
   }
 
-  /// Places an order using the Bybit API.
+  /// This endpoint supports to create the order for spot, spot margin, USDT perpetual, USDC perpetual, USDC futures, inverse futures and options.
   ///
   /// This method requires authentication.
-  /// Throws an [Exception] if the instance is not authenticated.
-  void placeOrder() {
+  ///
+  /// For more information, refer to the [Bybit API documentation](https://bybit-exchange.github.io/docs/v5/order/create-order).
+  Future<String> placeOrder({
+    required Category category,
+    required String symbol,
+    required Side side,
+    required OrderType orderType,
+    required String qty,
+    bool? isLeverage,
+    MarketUnit? marketUnit,
+    String? price,
+    TriggerDirection? triggerDirection,
+    OrderFilter? orderFilter,
+    String? triggerPrice,
+    TriggerBy? triggerBy,
+    TimeInForce? timeInForce,
+    PositionIdx? positionIdx,
+    String? orderLinkId,
+    String? takeProfit,
+    String? stopLoss,
+    TriggerBy? tpTriggerBy,
+    TriggerBy? slTriggerBy,
+    bool? reduceOnly,
+    bool? closeOnTrigger,
+    TpslMode? tpslMode,
+    String? tpLimitPrice,
+    String? slLimitPrice,
+    OrderType? tpOrderType,
+    OrderType? slOrderType,
+  }) async {
     if (!isAuthenticated) {
       throw Exception("Authentication required to place an order.");
     }
-    // Logic for placing an order
-    print("Placing order with API key: $apiKey");
+    final uri = Uri.parse('$baseUrl/v5/order/create');
+
+    final recvWindow = '5000';
+
+    final body = {
+      'category': category,
+      'symbol': symbol,
+      'side': side,
+      'orderType': orderType,
+      'qty': qty,
+      if (isLeverage != null) 'isLeverage': isLeverage,
+      if (marketUnit != null) 'marketUnit': marketUnit.name,
+      if (price != null) 'price': price,
+      if (triggerDirection != null) 'triggerDirection': triggerDirection.json,
+      if (orderFilter != null) 'orderFilter': orderFilter.json,
+      if (triggerPrice != null) 'triggerPrice': triggerPrice,
+      if (triggerBy != null) 'triggerBy': triggerBy.json,
+      if (timeInForce != null) 'timeInForce': timeInForce.json,
+      if (positionIdx != null) 'positionIdx': positionIdx.json,
+      if (orderLinkId != null) 'orderLinkId': orderLinkId,
+      if (takeProfit != null) 'takeProfit': takeProfit,
+      if (stopLoss != null) 'stopLoss': stopLoss,
+      if (tpTriggerBy != null) 'tpTriggerBy': tpTriggerBy.json,
+      if (slTriggerBy != null) 'slTriggerBy': slTriggerBy.json,
+      if (reduceOnly != null) 'reduceOnly': reduceOnly,
+      if (closeOnTrigger != null) 'closeOnTrigger': closeOnTrigger,
+      if (tpslMode != null) 'tpslMode': tpslMode.json,
+      if (tpLimitPrice != null) 'tpLimitPrice': tpLimitPrice,
+      if (slLimitPrice != null) 'slLimitPrice': slLimitPrice,
+      if (tpOrderType != null) 'tpOrderType': tpOrderType.json,
+      if (slOrderType != null) 'slOrderType': slOrderType.json,
+    };
+
+    final headers = _generateHeaders(recvWindow, json.encode(body));
+
+    final response = await http.post(uri, headers: headers, body: json.encode(body));
+
+    if (response.statusCode == 200) {
+      return json.decode(response.body)["orderId"];
+    } else {
+      throw Exception('Failed to create order: ${response.body}');
+    }
   }
 }
