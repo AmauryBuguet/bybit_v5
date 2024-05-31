@@ -8,7 +8,7 @@ enum Category {
   inverse;
 
   /// Allows to get a [Category] object from API responses
-  Category fromString(String str) {
+  factory Category.fromString(String str) {
     return Category.values.singleWhere((e) => e.name == str);
   }
 }

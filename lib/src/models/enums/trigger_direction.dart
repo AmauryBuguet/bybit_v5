@@ -1,3 +1,5 @@
+import 'package:collection/collection.dart';
+
 /// Enumeration of supported trigger directions for queries to the Bybit API.
 enum TriggerDirection {
   riseToTriggerPrice(1),
@@ -10,5 +12,10 @@ enum TriggerDirection {
   /// Allows to get a [TriggerDirection] object from API responses
   factory TriggerDirection.fromInt(int number) {
     return TriggerDirection.values.singleWhere((e) => e.json == number);
+  }
+
+  /// Allows to get a [TriggerDirection] object from API responses that might not contain it
+  static TriggerDirection? tryFromInt(int number) {
+    return TriggerDirection.values.singleWhereOrNull((e) => e.json == number);
   }
 }

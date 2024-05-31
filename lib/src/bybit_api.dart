@@ -3,7 +3,27 @@ import 'dart:convert';
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 
-import '../bybit_v5.dart';
+import 'models/classes/cancel_all_response.dart';
+import 'models/classes/get_orders_response.dart';
+import 'models/classes/get_trades_response.dart';
+import 'models/classes/kline.dart';
+import 'models/classes/order_ids.dart';
+import 'models/classes/trade.dart';
+import 'models/enums/category.dart';
+import 'models/enums/market_unit.dart';
+import 'models/enums/option_type.dart';
+import 'models/enums/order_filter.dart';
+import 'models/enums/order_status.dart';
+import 'models/enums/order_type.dart';
+import 'models/enums/position_idx.dart';
+import 'models/enums/request_type.dart';
+import 'models/enums/side.dart';
+import 'models/enums/stop_order_type.dart';
+import 'models/enums/time_in_force.dart';
+import 'models/enums/time_interval.dart';
+import 'models/enums/tpsl_mode.dart';
+import 'models/enums/trigger_by.dart';
+import 'models/enums/trigger_direction.dart';
 
 /// A class to interact with the Bybit API.
 ///
@@ -18,6 +38,9 @@ class BybitApi {
   /// Indicates if the instance is authenticated.
   final bool isAuthenticated;
 
+  /// The order reception time windpw
+  final int recvWindow;
+
   /// The API key for authenticated requests.
   final String? apiKey;
 
@@ -25,7 +48,7 @@ class BybitApi {
   final String? apiSecret;
 
   /// Creates a non-authenticated instance of the Bybit API client.
-  BybitApi()
+  BybitApi({this.recvWindow = 5000})
       : isAuthenticated = false,
         apiKey = null,
         apiSecret = null;
@@ -33,22 +56,73 @@ class BybitApi {
   /// Creates an authenticated instance of the Bybit API client.
   ///
   /// The [apiKey] and [apiSecret] are required for authenticated API calls.
-  BybitApi.authenticated({required this.apiKey, required this.apiSecret}) : isAuthenticated = true;
+  BybitApi.authenticated({required this.apiKey, required this.apiSecret, this.recvWindow = 5000}) : isAuthenticated = true;
 
-  /// Generate headers for signed requests
-  Map<String, String> _generateHeaders(String recvWindow, String body) {
-    final timestamp = DateTime.now().millisecondsSinceEpoch.toString();
-    final String signaturePayload = apiKey! + timestamp + recvWindow + body;
-    final hmacSha256 = Hmac(sha256, utf8.encode(apiSecret!));
-    final signature = hmacSha256.convert(utf8.encode(signaturePayload)).toString();
-
-    return {
+  /// Helper function to sign if needed and send requests to Bybit API
+  ///
+  /// For more information, refer to the [Bybit API documentation](https://bybit-exchange.github.io/docs/v5/guide).
+  Future<dynamic> _sendRequest(
+    String path, {
+    Map<String, dynamic>? body,
+    RequestType requestType = RequestType.getRequest,
+    bool signed = false,
+  }) async {
+    // generate headers
+    Map<String, String> headers = {
       'Content-Type': 'application/json',
-      'X-BAPI-SIGN': signature,
-      'X-BAPI-API-KEY': apiKey!,
-      'X-BAPI-TIMESTAMP': timestamp,
-      'X-BAPI-RECV-WINDOW': recvWindow,
     };
+    if (signed) {
+      if (!isAuthenticated) {
+        throw Exception("Authentication required to perform this action.");
+      }
+      String payload = "";
+      if (body != null && body.isNotEmpty) {
+        if (requestType == RequestType.getRequest) {
+          for (final p in body.entries) {
+            payload += "&${p.key}=${p.value}";
+          }
+          payload = payload.replaceFirst("&", "");
+        } else {
+          payload = jsonEncode(body);
+        }
+      }
+      final timestamp = DateTime.now().millisecondsSinceEpoch.toString();
+      final String signaturePayload = timestamp + apiKey! + recvWindow.toString() + payload;
+      final hmacSha256 = Hmac(sha256, utf8.encode(apiSecret!));
+      final signature = hmacSha256.convert(utf8.encode(signaturePayload)).toString();
+      headers['X-BAPI-API-KEY'] = apiKey!;
+      headers['X-BAPI-SIGN'] = signature;
+      headers['X-BAPI-SIGN-TYPE'] = '2';
+      headers['X-BAPI-TIMESTAMP'] = timestamp.toString();
+      headers['X-BAPI-RECV-WINDOW'] = recvWindow.toString();
+    }
+
+    // Send request
+    late final http.Response response;
+    if (requestType == RequestType.postRequest) {
+      response = await http.post(
+        Uri.https(baseUrl, path),
+        headers: headers,
+        body: jsonEncode(body),
+      );
+    } else {
+      response = await http.get(
+        Uri.https(baseUrl, path, body),
+        headers: headers,
+      );
+    }
+
+    // Parse response
+    if (response.statusCode == 200) {
+      final jsonResponse = json.decode(response.body);
+      if (jsonResponse["retCode"] == 0 && jsonResponse["retMsg"] == "OK") {
+        return jsonResponse["result"];
+      } else {
+        throw Exception('Request failed, retCode ${jsonResponse["retCode"]}, retMsg ${jsonResponse["retMsg"]}');
+      }
+    } else {
+      throw Exception('Request failed with error code: ${response.statusCode}');
+    }
   }
 
   /// Fetches the server time from the Bybit API.
@@ -58,16 +132,10 @@ class BybitApi {
   /// Returns the server time as a DateTime object using the `timeNano` parameter.
   /// For more information, refer to the [Bybit API documentation](https://bybit-exchange.github.io/docs/v5/market/time).
   Future<DateTime> getServerTime() async {
-    final uri = Uri.https(baseUrl, '/v5/market/time');
-    final response = await http.get(uri);
-    if (response.statusCode == 200) {
-      final Map<String, dynamic> data = json.decode(response.body);
-      final int timeNano = int.parse(data['result']['timeNano']);
-      final int microseconds = timeNano ~/ Duration.microsecondsPerSecond;
-      return DateTime.fromMicrosecondsSinceEpoch(microseconds);
-    } else {
-      throw Exception('Failed to get server time, code : ${response.statusCode}');
-    }
+    final response = await _sendRequest('/v5/market/time');
+    final int timeNano = int.parse(response['timeNano']);
+    final int microseconds = timeNano ~/ 1000;
+    return DateTime.fromMicrosecondsSinceEpoch(microseconds);
   }
 
   /// Fetches the server time from the Bybit API.
@@ -94,16 +162,9 @@ class BybitApi {
       if (limit != null) 'limit': limit.toString(),
     };
 
-    final uri = Uri.https(baseUrl, '/v5/market/kline', queryParams);
-    final response = await http.get(uri);
-
-    if (response.statusCode == 200) {
-      final Map<String, dynamic> data = json.decode(response.body);
-      final List<dynamic> klineList = data['result']['list'];
-      return klineList.map((klineData) => Kline.fromList(klineData)).toList();
-    } else {
-      throw Exception('Failed to fetch klines, code ${response.statusCode}');
-    }
+    final response = await _sendRequest('/v5/market/kline', body: queryParams);
+    final List<dynamic> klineList = response['list'];
+    return klineList.map((klineData) => Kline.fromList(klineData)).toList();
   }
 
   /// Fetches recent public trading data from the Bybit API.
@@ -130,16 +191,9 @@ class BybitApi {
       if (limit != null) 'limit': limit.toString(),
     };
 
-    final uri = Uri.https(baseUrl, '/v5/market/recent-trade', queryParams);
-    final response = await http.get(uri);
-
-    if (response.statusCode == 200) {
-      final Map<String, dynamic> data = json.decode(response.body);
-      final List<dynamic> tradeList = data['result']['list'];
-      return tradeList.map((tradeData) => Trade.fromMap(tradeData)).toList();
-    } else {
-      throw Exception('Failed to fetch recent trades, code ${response.statusCode}');
-    }
+    final response = await _sendRequest('/v5/market/recent-trade', body: queryParams);
+    final List<dynamic> tradeList = response['list'];
+    return tradeList.map((tradeData) => Trade.fromMap(tradeData)).toList();
   }
 
   /// This endpoint supports to create the order for spot, spot margin, USDT perpetual, USDC perpetual, USDC futures, inverse futures and options.
@@ -147,7 +201,7 @@ class BybitApi {
   /// This method requires authentication.
   ///
   /// For more information, refer to the [Bybit API documentation](https://bybit-exchange.github.io/docs/v5/order/create-order).
-  Future<String> placeOrder({
+  Future<OrderIds> placeOrder({
     required Category category,
     required String symbol,
     required Side side,
@@ -175,18 +229,11 @@ class BybitApi {
     OrderType? tpOrderType,
     OrderType? slOrderType,
   }) async {
-    if (!isAuthenticated) {
-      throw Exception("Authentication required to place an order.");
-    }
-    final uri = Uri.parse('$baseUrl/v5/order/create');
-
-    final recvWindow = '5000';
-
     final body = {
-      'category': category,
+      'category': category.name,
       'symbol': symbol,
-      'side': side,
-      'orderType': orderType,
+      'side': side.json,
+      'orderType': orderType.json,
       'qty': qty,
       if (isLeverage != null) 'isLeverage': isLeverage,
       if (marketUnit != null) 'marketUnit': marketUnit.name,
@@ -211,14 +258,221 @@ class BybitApi {
       if (slOrderType != null) 'slOrderType': slOrderType.json,
     };
 
-    final headers = _generateHeaders(recvWindow, json.encode(body));
+    final response = await _sendRequest('/v5/order/create', body: body, requestType: RequestType.postRequest, signed: true);
+    return OrderIds.fromJson(response);
+  }
 
-    final response = await http.post(uri, headers: headers, body: json.encode(body));
+  /// This endpoint allows to edit orders.
+  ///
+  /// This method requires authentication.
+  ///
+  /// One of [orderId] or [orderLinkId] is required.
+  ///
+  /// You can only modify unfilled or partially filled orders.
+  ///
+  /// For more information, refer to the [Bybit API documentation](https://bybit-exchange.github.io/docs/v5/order/amend-order).
+  Future<OrderIds> amendOrder({
+    required Category category,
+    required String symbol,
+    String? orderId,
+    String? orderLinkId,
+    String? triggerPrice,
+    String? qty,
+    String? price,
+    TpslMode? tpslMode,
+    String? takeProfit,
+    String? stopLoss,
+    TriggerBy? tpTriggerBy,
+    TriggerBy? slTriggerBy,
+    TriggerBy? triggerBy,
+    String? tpLimitPrice,
+    String? slLimitPrice,
+  }) async {
+    final body = {
+      'category': category.name,
+      'symbol': symbol,
+      if (orderId != null) 'orderId': orderId,
+      if (orderLinkId != null) 'orderLinkId': orderLinkId,
+      if (triggerPrice != null) 'triggerPrice': triggerPrice,
+      if (qty != null) 'qty': qty,
+      if (price != null) 'price': price,
+      if (tpslMode != null) 'tpslMode': tpslMode.json,
+      if (takeProfit != null) 'takeProfit': takeProfit,
+      if (stopLoss != null) 'stopLoss': stopLoss,
+      if (tpTriggerBy != null) 'tpTriggerBy': tpTriggerBy.json,
+      if (slTriggerBy != null) 'slTriggerBy': slTriggerBy.json,
+      if (triggerBy != null) 'triggerBy': triggerBy.json,
+      if (tpLimitPrice != null) 'tpLimitPrice': tpLimitPrice,
+      if (slLimitPrice != null) 'slLimitPrice': slLimitPrice,
+    };
 
-    if (response.statusCode == 200) {
-      return json.decode(response.body)["orderId"];
-    } else {
-      throw Exception('Failed to create order: ${response.body}');
-    }
+    final response = await _sendRequest('/v5/order/amend', body: body, requestType: RequestType.postRequest, signed: true);
+    return OrderIds.fromJson(response);
+  }
+
+  /// This endpoint allows to cancel orders.
+  ///
+  /// This method requires authentication.
+  ///
+  /// One of [orderId] or [orderLinkId] is required.
+  ///
+  /// For more information, refer to the [Bybit API documentation](https://bybit-exchange.github.io/docs/v5/order/cancel-order).
+  Future<OrderIds> cancelOrder({
+    required Category category,
+    required String symbol,
+    String? orderId,
+    String? orderLinkId,
+    OrderFilter? orderFilter,
+  }) async {
+    final body = {
+      'category': category.name,
+      'symbol': symbol,
+      if (orderId != null) 'orderId': orderId,
+      if (orderLinkId != null) 'orderLinkId': orderLinkId,
+      if (orderFilter != null) 'orderFilter': orderFilter.json,
+    };
+
+    final response = await _sendRequest('/v5/order/cancel', body: body, requestType: RequestType.postRequest, signed: true);
+    return OrderIds.fromJson(response);
+  }
+
+  /// This endpoint allows to query open and closed orders.
+  ///
+  /// This method requires authentication.
+  ///
+  /// One on [symbol], [baseCoin] or [settleCoin] is required.
+  ///
+  /// For more information, refer to the [Bybit API documentation](https://bybit-exchange.github.io/docs/v5/order/open-order).
+  Future<GetOrdersResponse> getOrders({
+    required Category category,
+    String? symbol,
+    String? baseCoin,
+    String? settleCoin,
+    String? orderId,
+    String? orderLinkId,
+    int? openOnly,
+    OrderFilter? orderFilter,
+    int? limit,
+    String? cursor,
+  }) async {
+    final Map<String, dynamic> params = {
+      'category': category.name,
+      if (symbol != null) 'symbol': symbol,
+      if (baseCoin != null) 'baseCoin': baseCoin,
+      if (settleCoin != null) 'settleCoin': settleCoin,
+      if (orderId != null) 'orderId': orderId,
+      if (orderLinkId != null) 'orderLinkId': orderLinkId,
+      if (openOnly != null) 'openOnly': openOnly.toString(),
+      if (orderFilter != null) 'orderFilter': orderFilter.json,
+      if (limit != null) 'limit': limit.toString(),
+      if (cursor != null) 'cursor': cursor,
+    };
+
+    final response = await _sendRequest('/v5/order/realtime', body: params, signed: true);
+    return GetOrdersResponse.fromMap(response);
+  }
+
+  /// This endpoint allows to close all active orders.
+  ///
+  /// This method requires authentication.
+  ///
+  /// One on [symbol], [baseCoin] or [settleCoin] is required.
+  ///
+  /// For more information, refer to the [Bybit API documentation](https://bybit-exchange.github.io/docs/v5/order/cancel-all).
+  Future<CancelAllResponse> cancelAllOrders({
+    required Category category,
+    String? symbol,
+    String? baseCoin,
+    String? settleCoin,
+    OrderFilter? orderFilter,
+    StopOrderType? stopOrderType,
+  }) async {
+    final Map<String, dynamic> body = {
+      'category': category.name,
+      if (symbol != null) 'symbol': symbol,
+      if (baseCoin != null) 'baseCoin': baseCoin,
+      if (settleCoin != null) 'settleCoin': settleCoin,
+      if (orderFilter != null) 'orderFilter': orderFilter.json,
+      if (stopOrderType != null) 'stopOrderType': stopOrderType.json,
+    };
+
+    final response = await _sendRequest('/v5/order/cancel-all', body: body, signed: true, requestType: RequestType.postRequest);
+    return CancelAllResponse.fromMap(response);
+  }
+
+  /// This endpoint allows to query order history over 2 years.
+  ///
+  /// This method requires authentication.
+  ///
+  /// You can query by [symbol], [baseCoin], [orderId] and [orderLinkId]
+  ///
+  /// For more information, refer to the [Bybit API documentation](https://bybit-exchange.github.io/docs/v5/order/order-list).
+  Future<GetOrdersResponse> getOrderHistory({
+    required Category category,
+    String? symbol,
+    String? baseCoin,
+    String? settleCoin,
+    String? orderId,
+    String? orderLinkId,
+    OrderFilter? orderFilter,
+    OrderStatus? orderStatus,
+    int? startTime,
+    int? endTime,
+    int? limit,
+    String? cursor,
+  }) async {
+    final Map<String, dynamic> queryParams = {
+      'category': category.name,
+      if (symbol != null) 'symbol': symbol,
+      if (baseCoin != null) 'baseCoin': baseCoin,
+      if (settleCoin != null) 'settleCoin': settleCoin,
+      if (orderId != null) 'orderId': orderId,
+      if (orderLinkId != null) 'orderLinkId': orderLinkId,
+      if (orderFilter != null) 'orderFilter': orderFilter.json,
+      if (orderStatus != null) 'orderStatus': orderStatus.json,
+      if (startTime != null) 'startTime': startTime.toString(),
+      if (endTime != null) 'endTime': endTime.toString(),
+      if (limit != null) 'limit': limit.toString(),
+      if (cursor != null) 'cursor': cursor,
+    };
+
+    final response = await _sendRequest('/v5/order/history', body: queryParams, signed: true);
+    return GetOrdersResponse.fromMap(response);
+  }
+
+  /// This endpoint allows to query users' execution records.
+  ///
+  /// This method requires authentication.
+  ///
+  /// You can query by [symbol], [orderId], [orderLinkId], and [baseCoin].
+  ///
+  /// For more information, refer to the [Bybit API documentation](https://bybit-exchange.github.io/docs/v5/order/execution).
+  Future<GetTradesResponse> getTradeHistory({
+    required Category category,
+    String? symbol,
+    String? orderId,
+    String? orderLinkId,
+    String? baseCoin,
+    int? startTime,
+    int? endTime,
+    String? execType,
+    int? limit,
+    String? cursor,
+  }) async {
+    final Map<String, dynamic> queryParams = {
+      'category': category.name,
+      if (symbol != null) 'symbol': symbol,
+      if (orderId != null) 'orderId': orderId,
+      if (orderLinkId != null) 'orderLinkId': orderLinkId,
+      if (baseCoin != null) 'baseCoin': baseCoin,
+      if (startTime != null) 'startTime': startTime.toString(),
+      if (endTime != null) 'endTime': endTime.toString(),
+      if (execType != null) 'execType': execType,
+      if (limit != null) 'limit': limit.toString(),
+      if (cursor != null) 'cursor': cursor,
+    };
+
+    final response = await _sendRequest('/v5/execution/list', body: queryParams, signed: true);
+    return GetTradesResponse.fromMap(response);
   }
 }
