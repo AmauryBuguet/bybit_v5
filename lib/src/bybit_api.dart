@@ -2,14 +2,23 @@ import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
+import 'package:web_socket_channel/io.dart';
 
 import 'models/classes/cancel_all_response.dart';
-import 'models/classes/get_orders_response.dart';
-import 'models/classes/get_trades_response.dart';
+import 'models/classes/closed_pnl_response.dart';
+import 'models/classes/fee_rate.dart';
+import 'models/classes/instruments_response.dart';
 import 'models/classes/kline.dart';
 import 'models/classes/order_ids.dart';
+import 'models/classes/orders_list_response.dart';
+import 'models/classes/position_list_response.dart';
+import 'models/classes/ticker_info.dart';
 import 'models/classes/trade.dart';
+import 'models/classes/trade_list_response.dart';
+import 'models/classes/wallet_balance.dart';
+import 'models/enums/account_type.dart';
 import 'models/enums/category.dart';
+import 'models/enums/instrument_status.dart';
 import 'models/enums/market_unit.dart';
 import 'models/enums/option_type.dart';
 import 'models/enums/order_filter.dart';
@@ -24,6 +33,7 @@ import 'models/enums/time_interval.dart';
 import 'models/enums/tpsl_mode.dart';
 import 'models/enums/trigger_by.dart';
 import 'models/enums/trigger_direction.dart';
+import 'models/enums/ws_endpoint.dart';
 
 /// A class to interact with the Bybit API.
 ///
@@ -57,6 +67,16 @@ class BybitApi {
   ///
   /// The [apiKey] and [apiSecret] are required for authenticated API calls.
   BybitApi.authenticated({required this.apiKey, required this.apiSecret, this.recvWindow = 5000}) : isAuthenticated = true;
+
+  Future<IOWebSocketChannel> _wsConnect(WsEndpoint endpoint) async {
+    final wsChannel = IOWebSocketChannel.connect(
+      endpoint.url,
+      pingInterval: const Duration(seconds: 20),
+      connectTimeout: const Duration(seconds: 3),
+    );
+    await wsChannel.ready;
+    return wsChannel;
+  }
 
   /// Helper function to sign if needed and send requests to Bybit API
   ///
@@ -165,6 +185,61 @@ class BybitApi {
     final response = await _sendRequest('/v5/market/kline', body: queryParams);
     final List<dynamic> klineList = response['list'];
     return klineList.map((klineData) => Kline.fromList(klineData)).toList();
+  }
+
+  /// Query for the instrument specification of online trading pairs.
+  ///
+  /// This method does not require authentication.
+  ///
+  /// THIS METHOD CURRENTLY SUPPORTS ONLY [Category.linear] OR [Category.inverse].
+  ///
+  /// When query by baseCoin, regardless of category=linear or inverse, the result will have USDT perpetual, USDC contract and Inverse contract symbols.
+  ///
+  /// For more information, refer to the [Bybit API documentation](https://bybit-exchange.github.io/docs/v5/market/instrument).
+  Future<InstrumentsResponse> getDerivativeInstrumentsInfo({
+    required Category category,
+    String? symbol,
+    InstrumentStatus? status,
+    String? baseCoin,
+    int? limit,
+    String? cursor,
+  }) async {
+    final Map<String, dynamic> queryParams = {
+      'category': category.name,
+      if (symbol != null) 'symbol': symbol,
+      if (status != null) 'status': status.json,
+      if (baseCoin != null) 'baseCoin': baseCoin,
+      if (limit != null) 'limit': limit.toString(),
+      if (cursor != null) 'cursor': cursor,
+    };
+
+    final response = await _sendRequest('/v5/market/instruments-info', body: queryParams);
+    print(response);
+    return InstrumentsResponse.fromMap(response);
+  }
+
+  /// Get the latest price snapshot, best bid/ask price, and trading volume in the last 24 hours.
+  ///
+  /// This method does not require authentication.
+  ///
+  /// THIS METHOD CURRENTLY SUPPORTS ONLY [Category.linear] OR [Category.inverse].
+  ///
+  /// For more information, refer to the [Bybit API documentation](https://bybit-exchange.github.io/docs/v5/market/tickers).
+  Future<List<TickerInfo>> getDerivativesTickers({
+    required Category category,
+    String? symbol,
+    String? baseCoin,
+    String? expDate,
+  }) async {
+    final Map<String, dynamic> queryParams = {
+      'category': category.name,
+      if (symbol != null) 'symbol': symbol,
+      if (baseCoin != null) 'baseCoin': baseCoin,
+      if (expDate != null) 'expDate': expDate,
+    };
+
+    final response = await _sendRequest('/v5/market/tickers', body: queryParams);
+    return List<TickerInfo>.from((response["list"] as List<dynamic>).map((e) => TickerInfo.fromMap(e)));
   }
 
   /// Fetches recent public trading data from the Bybit API.
@@ -474,5 +549,176 @@ class BybitApi {
 
     final response = await _sendRequest('/v5/execution/list', body: queryParams, signed: true);
     return GetTradesResponse.fromMap(response);
+  }
+
+  /// This endpoint allows to query real-time position data.
+  ///
+  /// This method requires authentication.
+  ///
+  /// Unified account covers: USDT perpetual / USDC contract / Inverse contract / Options
+  ///
+  /// Classic account covers: USDT perpetual / Inverse contract
+  ///
+  /// For more information, refer to the [Bybit API documentation](https://bybit-exchange.github.io/docs/v5/position).
+  Future<PositionListResponse> getPositionInfo({
+    required Category category,
+    String? symbol,
+    String? baseCoin,
+    String? settleCoin,
+    int? limit,
+    String? cursor,
+  }) async {
+    final Map<String, dynamic> queryParams = {
+      'category': category.name,
+      if (symbol != null) 'symbol': symbol,
+      if (baseCoin != null) 'baseCoin': baseCoin,
+      if (settleCoin != null) 'settleCoin': settleCoin,
+      if (limit != null) 'limit': limit.toString(),
+      if (cursor != null) 'cursor': cursor,
+    };
+
+    final response = await _sendRequest('/v5/position/list', body: queryParams, signed: true);
+    return PositionListResponse.fromMap(response);
+  }
+
+  /// This endpoint allows to set the leverage.
+  ///
+  /// This method requires authentication.
+  ///
+  /// [buyLeverage] must be the same as [sellLeverage] for UTA (cross margin)
+  ///
+  /// For more information, refer to the [Bybit API documentation](https://bybit-exchange.github.io/docs/v5/position/leverage).
+  Future<void> setLeverage({
+    required Category category,
+    required String symbol,
+    required int buyLeverage,
+    required int sellLeverage,
+  }) async {
+    final Map<String, dynamic> bodyParams = {
+      'category': category.name,
+      'symbol': symbol,
+      'buyLeverage': buyLeverage.toString(),
+      'sellLeverage': sellLeverage.toString(),
+    };
+
+    await _sendRequest('/v5/position/set-leverage', body: bodyParams, signed: true, requestType: RequestType.postRequest);
+  }
+
+  /// This endpoint allows to set the take profit, stop loss or trailing stop for the position.
+  ///
+  /// This method requires authentication.
+  ///
+  /// [takeProfit], [stopLoss] and [trailingStop] cannot be less than 0. 0 means cancel TP / SL / TS.
+  ///
+  /// Unified account covers: USDT perpetual / USDC contract / Inverse contract
+  ///
+  /// Classic account covers: USDT perpetual / Inverse contract
+  ///
+  /// For more information, refer to the [Bybit API documentation](https://bybit-exchange.github.io/docs/v5/position/trading-stop).
+  Future<void> setTradingStop({
+    required Category category,
+    required String symbol,
+    String? takeProfit,
+    String? stopLoss,
+    String? trailingStop,
+    TriggerBy? tpTriggerBy,
+    TriggerBy? slTriggerBy,
+    String? activePrice,
+    required TpslMode tpslMode,
+    String? tpSize,
+    String? slSize,
+    String? tpLimitPrice,
+    String? slLimitPrice,
+    OrderType? tpOrderType,
+    OrderType? slOrderType,
+    required PositionIdx positionIdx,
+  }) async {
+    final Map<String, dynamic> bodyParams = {
+      'category': category.name,
+      'symbol': symbol,
+      if (takeProfit != null) 'takeProfit': takeProfit,
+      if (stopLoss != null) 'stopLoss': stopLoss,
+      if (trailingStop != null) 'trailingStop': trailingStop,
+      if (tpTriggerBy != null) 'tpTriggerBy': tpTriggerBy.json,
+      if (slTriggerBy != null) 'slTriggerBy': slTriggerBy.json,
+      if (activePrice != null) 'activePrice': activePrice,
+      'tpslMode': tpslMode.json,
+      if (tpSize != null) 'tpSize': tpSize,
+      if (slSize != null) 'slSize': slSize,
+      if (tpLimitPrice != null) 'tpLimitPrice': tpLimitPrice,
+      if (slLimitPrice != null) 'slLimitPrice': slLimitPrice,
+      if (tpOrderType != null) 'tpOrderType': tpOrderType.json,
+      if (slOrderType != null) 'slOrderType': slOrderType.json,
+      'positionIdx': positionIdx.json,
+    };
+
+    await _sendRequest('/v5/position/trading-stop', body: bodyParams, signed: true, requestType: RequestType.postRequest);
+  }
+
+  /// This endpoint allows querying user's closed profit and loss records.
+  ///
+  /// This method requires authentication.
+  ///
+  /// For more information, refer to the [Bybit API documentation](https://bybit-exchange.github.io/docs/v5/position/close-pnl).
+  Future<ClosedPnlResponse> getClosedPnl({
+    required Category category,
+    String? symbol,
+    int? startTime,
+    int? endTime,
+    int? limit,
+    String? cursor,
+  }) async {
+    final Map<String, dynamic> queryParams = {
+      'category': category.name,
+      if (symbol != null) 'symbol': symbol,
+      if (startTime != null) 'startTime': startTime.toString(),
+      if (endTime != null) 'endTime': endTime.toString(),
+      if (limit != null) 'limit': limit.toString(),
+      if (cursor != null) 'cursor': cursor,
+    };
+
+    final response = await _sendRequest('/v5/position/closed-pnl', body: queryParams, signed: true);
+    return ClosedPnlResponse.fromMap(response);
+  }
+
+  /// Obtain wallet balance, query asset information of each currency, and account risk rate information.
+  ///
+  /// This method requires authentication.
+  ///
+  /// By default, currency information with assets or liabilities of 0 is not returned.
+  ///
+  /// For more information, refer to the [Bybit API documentation](https://bybit-exchange.github.io/docs/v5/account/wallet-balance).
+  Future<WalletBalance> getWalletBalance({
+    required AccountType accountType,
+    String? coin,
+  }) async {
+    final Map<String, dynamic> queryParams = {
+      'accountType': accountType.json,
+      if (coin != null) 'coin': coin,
+    };
+
+    final response = await _sendRequest('/v5/account/wallet-balance', body: queryParams, signed: true);
+    return WalletBalance.fromMap((response["list"] as List<dynamic>).first);
+  }
+
+  /// Get the trading fee rate.
+  ///
+  /// This method requires authentication.
+  ///
+  /// For more information, refer to the [Bybit API documentation](https://bybit-exchange.github.io/docs/v5/account/fee-rate).
+  Future<List<FeeRate>> getFeeRates({
+    required Category category,
+    String? symbol,
+    String? baseCoin,
+  }) async {
+    final Map<String, dynamic> queryParams = {
+      'category': category.name,
+      if (symbol != null) 'symbol': symbol,
+      if (baseCoin != null) 'baseCoin': baseCoin,
+    };
+
+    final response = await _sendRequest('/v5/account/fee-rate', body: queryParams, signed: true);
+    print(response);
+    return List<FeeRate>.from((response["list"] as List<dynamic>).map((e) => FeeRate.fromMap(e)));
   }
 }

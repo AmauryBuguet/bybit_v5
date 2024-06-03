@@ -1,5 +1,7 @@
 import 'package:bybit_v5/bybit_v5.dart';
 import 'package:bybit_v5/src/models/classes/order_ids.dart';
+import 'package:bybit_v5/src/models/classes/position_list_response.dart';
+import 'package:bybit_v5/src/models/enums/account_type.dart';
 import 'package:test/test.dart';
 import 'package:dotenv/dotenv.dart';
 
@@ -103,6 +105,53 @@ void main() {
 
       // Validate the response
       expect(tradeIds, isA<OrderIds>());
+    });
+
+    test('getPositionInfo returns a PositionListResponse object', () async {
+      // Call the function
+      final response = await bybit.getPositionInfo(
+        category: Category.linear,
+        limit: 10,
+        symbol: 'BTCUSDT',
+      );
+
+      // Assert that the returned value is a list of Trade objects
+      expect(response, isA<PositionListResponse>());
+
+      // Assert that the list has the correct length
+      expect(response.positions.length, isPositive);
+    });
+
+    test('set and get leverage value', () async {
+      // Call the function
+      await bybit.setLeverage(
+        category: Category.linear,
+        symbol: 'BTCUSDT',
+        buyLeverage: 15,
+        sellLeverage: 15,
+      );
+    });
+
+    test('wallet balance properly returned', () async {
+      // Call the function
+      final result = await bybit.getWalletBalance(
+        accountType: AccountType.contract,
+        coin: "USDT",
+      );
+
+      expect(result.coins.length, 1);
+      expect(result.coins.first.equity, isA<double>());
+    });
+
+    test('fee rate properly returned', () async {
+      // Call the function
+      final result = await bybit.getFeeRates(
+        category: Category.linear,
+        symbol: 'BTCUSDT',
+      );
+
+      expect(result.length, 1);
+      expect(result.first.makerFeeRate, isA<double>());
     });
   });
 }
