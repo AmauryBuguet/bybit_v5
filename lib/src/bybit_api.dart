@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:developer';
 
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
@@ -12,18 +14,24 @@ import 'models/classes/kline.dart';
 import 'models/classes/order_ids.dart';
 import 'models/classes/orders_list_response.dart';
 import 'models/classes/position_list_response.dart';
+import 'models/classes/subscription.dart';
 import 'models/classes/ticker_info.dart';
 import 'models/classes/trade.dart';
 import 'models/classes/trade_list_response.dart';
 import 'models/classes/wallet_balance.dart';
+import 'models/classes/ws_kline.dart';
+import 'models/classes/ws_orderbook.dart';
+import 'models/classes/ws_trade.dart';
 import 'models/enums/account_type.dart';
 import 'models/enums/category.dart';
+import 'models/enums/connect_status.dart';
 import 'models/enums/instrument_status.dart';
 import 'models/enums/market_unit.dart';
 import 'models/enums/option_type.dart';
 import 'models/enums/order_filter.dart';
 import 'models/enums/order_status.dart';
 import 'models/enums/order_type.dart';
+import 'models/enums/orderbook_depth.dart';
 import 'models/enums/position_idx.dart';
 import 'models/enums/request_type.dart';
 import 'models/enums/side.dart';
@@ -33,7 +41,6 @@ import 'models/enums/time_interval.dart';
 import 'models/enums/tpsl_mode.dart';
 import 'models/enums/trigger_by.dart';
 import 'models/enums/trigger_direction.dart';
-import 'models/enums/ws_endpoint.dart';
 
 /// A class to interact with the Bybit API.
 ///
@@ -43,12 +50,30 @@ import 'models/enums/ws_endpoint.dart';
 /// actions that require authentication, such as placing orders.
 class BybitApi {
   /// The base URL for the Bybit API.
-  static const String baseUrl = "api.bybit.com";
+  static const String _baseUrl = "api.bybit.com";
+
+  /// The base URL for Bybit public websocket streams.
+  static const String _basePublicWsUrl = "wss://stream.bybit.com/v5/public/";
+
+  /// Current ws endpoint used
+  String? _currWsUrl;
+
+  /// stream controller that can be listened to more than once
+  final StreamController<Map<String, dynamic>> _controller = StreamController<Map<String, dynamic>>.broadcast();
+
+  /// channel object to handle stages of ws connection
+  IOWebSocketChannel? _wsChannel;
+
+  /// list of currently subscribed topics
+  List<String> _topics = [];
+
+  /// Indicates if the websocket connection has been made already
+  ConnectStatus _connectStatus = ConnectStatus.disconnected;
 
   /// Indicates if the instance is authenticated.
   final bool isAuthenticated;
 
-  /// The order reception time windpw
+  /// The order reception time window
   final int recvWindow;
 
   /// The API key for authenticated requests.
@@ -68,14 +93,122 @@ class BybitApi {
   /// The [apiKey] and [apiSecret] are required for authenticated API calls.
   BybitApi.authenticated({required this.apiKey, required this.apiSecret, this.recvWindow = 5000}) : isAuthenticated = true;
 
-  Future<IOWebSocketChannel> _wsConnect(WsEndpoint endpoint) async {
-    final wsChannel = IOWebSocketChannel.connect(
-      endpoint.url,
-      pingInterval: const Duration(seconds: 20),
-      connectTimeout: const Duration(seconds: 3),
+  Future<void> _wsConnect(String url) async {
+    _currWsUrl = url;
+    _connectStatus = ConnectStatus.connecting;
+    log("connecting to ws endpoint $url");
+    try {
+      _wsChannel = IOWebSocketChannel.connect(
+        url,
+        pingInterval: const Duration(seconds: 20),
+        connectTimeout: const Duration(seconds: 3),
+      );
+      await _wsChannel!.ready;
+    } catch (e) {
+      log("Couldn't connect to endpoint $url");
+      _connectStatus = ConnectStatus.disconnected;
+      _currWsUrl = null;
+      return;
+    }
+    _wsChannel!.stream.listen((data) {
+      Map<String, dynamic> json = jsonDecode(data);
+      if (json.containsKey("topic")) {
+        _controller.add(json);
+      } else {
+        log(json.toString());
+      }
+    });
+    _connectStatus = ConnectStatus.connected;
+  }
+
+  Future<void> _subscribeToTopic(String topic, String url, {int retries = 0}) async {
+    if (retries >= 3) {
+      log("too many retries, canceling ...");
+      return;
+    }
+    if (_connectStatus == ConnectStatus.connected) {
+      if (_currWsUrl != url) {
+        throw Exception("Can't connect to a different endpoint, make another instance of BybitApi");
+      }
+      log("subscribing");
+      final obj = {
+        "op": "subscribe",
+        "args": [topic],
+      };
+      _wsChannel!.sink.add(jsonEncode(obj));
+      _topics.add(topic);
+    } else if (_connectStatus == ConnectStatus.connecting) {
+      log("already connecting, awaiting 1s for retry ${++retries}");
+      await Future.delayed(Duration(seconds: 1));
+      _subscribeToTopic(topic, url, retries: retries);
+      return;
+    } else {
+      await _wsConnect(url);
+      _subscribeToTopic(topic, url, retries: ++retries);
+    }
+  }
+
+  /// Helper function to unsubscribe from a particular websocket topic
+  Future<void> unsubscribeFromTopic(String topic) async {
+    final obj = {
+      "op": "unsubscribe",
+      "args": [topic],
+    };
+    _wsChannel!.sink.add(jsonEncode(obj));
+    _topics.remove(topic);
+    if (_topics.isEmpty) {
+      disconnectWs();
+    }
+  }
+
+  /// Close websocket connection
+  void disconnectWs() {
+    log("ws disconnected");
+    _wsChannel?.sink.close();
+    _connectStatus = ConnectStatus.disconnected;
+    _currWsUrl = null;
+  }
+
+  /// Subscribe to the klines stream.
+  ///
+  /// Push frequency: 1-60s
+  ///
+  /// For more information, refer to the [Bybit API documentation](https://bybit-exchange.github.io/docs/v5/websocket/public/kline).
+  Subscription<WsKlineMessage> subscribeToKlines({required TimeInterval interval, required String symbol, required Category category}) {
+    final topic = "kline.${interval.json}.$symbol";
+    _subscribeToTopic(topic, "$_basePublicWsUrl${category.name}");
+    return Subscription(
+      stream: _controller.stream.where((e) => e["topic"] == topic).map((e) => WsKlineMessage.fromMap(e)),
+      topic: topic,
     );
-    await wsChannel.ready;
-    return wsChannel;
+  }
+
+  /// Subscribe to the recent trades stream.
+  ///
+  /// Push frequency: real-time
+  ///
+  /// For more information, refer to the [Bybit API documentation](https://bybit-exchange.github.io/docs/v5/websocket/public/trade).
+  Subscription<WsTradeMessage> subscribeToTrades({required String symbol, required Category category}) {
+    final topic = "publicTrade.$symbol";
+    _subscribeToTopic(topic, "$_basePublicWsUrl${category.name}");
+    return Subscription(
+      stream: _controller.stream.where((e) => e["topic"] == topic).map((e) => WsTradeMessage.fromMap(e)),
+      topic: topic,
+    );
+  }
+
+  /// Subscribe to the orderbook stream. Supports different depths.
+  ///
+  /// Push frequency : dedends on chosen depth, see documentation.
+  ///
+  /// For more information, refer to the [Bybit API documentation](https://bybit-exchange.github.io/docs/v5/websocket/public/orderbook).
+  Subscription<WsOrderBookMessage> subscribeToOrderbook({required OrderbookDepth depth, required String symbol, required Category category}) {
+    final topic = "orderbook.${depth.json}.$symbol";
+    _subscribeToTopic(topic, "$_basePublicWsUrl${category.name}");
+    return Subscription(
+      stream: _controller.stream.where((e) => e["topic"] == topic).map((e) => WsOrderBookMessage.fromMap(e)),
+      topic: topic,
+    );
   }
 
   /// Helper function to sign if needed and send requests to Bybit API
@@ -121,13 +254,13 @@ class BybitApi {
     late final http.Response response;
     if (requestType == RequestType.postRequest) {
       response = await http.post(
-        Uri.https(baseUrl, path),
+        Uri.https(_baseUrl, path),
         headers: headers,
         body: jsonEncode(body),
       );
     } else {
       response = await http.get(
-        Uri.https(baseUrl, path, body),
+        Uri.https(_baseUrl, path, body),
         headers: headers,
       );
     }

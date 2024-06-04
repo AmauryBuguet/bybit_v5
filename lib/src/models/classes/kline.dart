@@ -1,6 +1,6 @@
 /// Represents a single candlestick (kline) in the Bybit API response.
 class Kline {
-  final DateTime startTime;
+  final int startTime;
   final double openPrice;
   final double highPrice;
   final double lowPrice;
@@ -22,7 +22,7 @@ class Kline {
   /// Create a [Kline] object from Bybit API json response
   factory Kline.fromList(List<dynamic> jsonList) {
     return Kline(
-      startTime: DateTime.fromMillisecondsSinceEpoch(int.parse(jsonList[0])),
+      startTime: int.parse(jsonList[0]),
       openPrice: double.parse(jsonList[1]),
       highPrice: double.parse(jsonList[2]),
       lowPrice: double.parse(jsonList[3]),
