@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:developer';
 
+import 'package:bybit_v5/src/models/classes/ws_wallet.dart';
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/io.dart';
@@ -20,7 +21,9 @@ import 'models/classes/trade.dart';
 import 'models/classes/trade_list_response.dart';
 import 'models/classes/wallet_balance.dart';
 import 'models/classes/ws_kline.dart';
+import 'models/classes/ws_order.dart';
 import 'models/classes/ws_orderbook.dart';
+import 'models/classes/ws_position.dart';
 import 'models/classes/ws_trade.dart';
 import 'models/enums/account_type.dart';
 import 'models/enums/category.dart';
@@ -93,7 +96,7 @@ class BybitApi {
   /// The [apiKey] and [apiSecret] are required for authenticated API calls.
   BybitApi.authenticated({required this.apiKey, required this.apiSecret, this.recvWindow = 5000}) : isAuthenticated = true;
 
-  Future<void> _wsConnect(String url) async {
+  Future<void> _wsConnect(String url, {bool signed = false}) async {
     _currWsUrl = url;
     _connectStatus = ConnectStatus.connecting;
     log("connecting to ws endpoint $url");
@@ -110,18 +113,62 @@ class BybitApi {
       _currWsUrl = null;
       return;
     }
+    if (signed) {
+      if (!isAuthenticated) {
+        throw Exception("Authentication required to perform this action.");
+      }
+      final timestamp = DateTime.now().millisecondsSinceEpoch + 1000;
+      final msg = utf8.encode('GET/realtime$timestamp');
+      final hmacSha256 = Hmac(sha256, utf8.encode(apiSecret!));
+      final sign = hmacSha256.convert(msg).toString();
+      final obj = {
+        "op": "auth",
+        "args": [
+          apiKey,
+          timestamp,
+          sign,
+        ]
+      };
+      _wsChannel!.sink.add(jsonEncode(obj));
+    }
     _wsChannel!.stream.listen((data) {
       Map<String, dynamic> json = jsonDecode(data);
+      log(json.toString());
       if (json.containsKey("topic")) {
         _controller.add(json);
       } else {
-        log(json.toString());
+        if (json["op"] == "subscribe") {
+          if (json["success"]) {
+            final topic = (json["req_id"] as String).split("/").first;
+            _topics.add(topic);
+            log("Subscribed to $topic");
+          }
+        } else if (json["op"] == "unsubscribe") {
+          if (json["success"]) {
+            final topic = (json["req_id"] as String).split("/").first;
+            _topics.remove(topic);
+            log("Unsubscribed from $topic");
+            if (_topics.isEmpty) {
+              log("No more active topics, disconnecting...");
+              disconnectWs();
+            }
+          }
+        } else if (json["op"] == "auth") {
+          if (json["success"]) {
+            log("Auth successful");
+          } else {
+            log("Auth failed");
+          }
+        } else {
+          log(json.toString());
+        }
       }
     });
+    log("ws connected");
     _connectStatus = ConnectStatus.connected;
   }
 
-  Future<void> _subscribeToTopic(String topic, String url, {int retries = 0}) async {
+  Future<void> _subscribeToTopic(String topic, String url, {int retries = 0, bool signed = false}) async {
     if (retries >= 3) {
       log("too many retries, canceling ...");
       return;
@@ -130,35 +177,32 @@ class BybitApi {
       if (_currWsUrl != url) {
         throw Exception("Can't connect to a different endpoint, make another instance of BybitApi");
       }
-      log("subscribing");
+      log("subscribing to $topic");
       final obj = {
         "op": "subscribe",
+        "req_id": "$topic/${DateTime.now().millisecondsSinceEpoch}",
         "args": [topic],
       };
       _wsChannel!.sink.add(jsonEncode(obj));
-      _topics.add(topic);
     } else if (_connectStatus == ConnectStatus.connecting) {
       log("already connecting, awaiting 1s for retry ${++retries}");
       await Future.delayed(Duration(seconds: 1));
-      _subscribeToTopic(topic, url, retries: retries);
+      _subscribeToTopic(topic, url, retries: retries, signed: signed);
       return;
     } else {
-      await _wsConnect(url);
-      _subscribeToTopic(topic, url, retries: ++retries);
+      await _wsConnect(url, signed: signed);
+      _subscribeToTopic(topic, url, retries: ++retries, signed: signed);
     }
   }
 
   /// Helper function to unsubscribe from a particular websocket topic
-  Future<void> unsubscribeFromTopic(String topic) async {
+  void unsubscribeFromTopic(String topic) async {
     final obj = {
       "op": "unsubscribe",
+      "req_id": "$topic/${DateTime.now().millisecondsSinceEpoch}",
       "args": [topic],
     };
     _wsChannel!.sink.add(jsonEncode(obj));
-    _topics.remove(topic);
-    if (_topics.isEmpty) {
-      disconnectWs();
-    }
   }
 
   /// Close websocket connection
@@ -207,6 +251,50 @@ class BybitApi {
     _subscribeToTopic(topic, "$_basePublicWsUrl${category.name}");
     return Subscription(
       stream: _controller.stream.where((e) => e["topic"] == topic).map((e) => WsOrderBookMessage.fromMap(e)),
+      topic: topic,
+    );
+  }
+
+  /// Subscribe to the position stream to see changes to your position data in real-time.
+  ///
+  /// [Category.spot] is not supported
+  ///
+  /// Push frequency : real-time.
+  ///
+  /// For more information, refer to the [Bybit API documentation](https://bybit-exchange.github.io/docs/v5/websocket/private/position).
+  Subscription<WsPositionMessage> subscribeToPositionUpdates({Category? category}) {
+    final topic = category != null ? "position.${category.name}" : "position";
+    _subscribeToTopic(topic, "wss://stream.bybit.com/v5/private", signed: true);
+    return Subscription(
+      stream: _controller.stream.where((e) => e["topic"] == topic).map((e) => WsPositionMessage.fromMap(e)),
+      topic: topic,
+    );
+  }
+
+  /// Subscribe to the order stream to see changes to your orders in real-time.
+  ///
+  /// Push frequency : real-time.
+  ///
+  /// For more information, refer to the [Bybit API documentation](https://bybit-exchange.github.io/docs/v5/websocket/private/order).
+  Subscription<WsOrderMessage> subscribeToOrderUpdates({Category? category}) {
+    final topic = category != null ? "order.${category.name}" : "order";
+    _subscribeToTopic(topic, "wss://stream.bybit.com/v5/private", signed: true);
+    return Subscription(
+      stream: _controller.stream.where((e) => e["topic"] == topic).map((e) => WsOrderMessage.fromMap(e)),
+      topic: topic,
+    );
+  }
+
+  /// Subscribe to the wallet stream to see changes to your wallet in real-time.
+  ///
+  /// Push frequency : real-time.
+  ///
+  /// For more information, refer to the [Bybit API documentation](https://bybit-exchange.github.io/docs/v5/websocket/private/wallet).
+  Subscription<WsWalletMessage> subscribeToWalletUpdates() {
+    final topic = "wallet";
+    _subscribeToTopic(topic, "wss://stream.bybit.com/v5/private", signed: true);
+    return Subscription(
+      stream: _controller.stream.where((e) => e["topic"] == topic).map((e) => WsWalletMessage.fromMap(e)),
       topic: topic,
     );
   }

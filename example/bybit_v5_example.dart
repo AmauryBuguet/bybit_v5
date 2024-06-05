@@ -12,18 +12,33 @@ void main() async {
   final bybit = BybitApi.authenticated(apiKey: apiKey, apiSecret: apiSecret);
   // print('auth: ${bybit.isAuthenticated}');
   // final time = await bybit.getServerTime();
-  // final s = bybit.subscribeToKlines(interval: TimeInterval.fifteenMinutes, symbol: "BTCUSDT", category: Category.linear);
-  final s = bybit.subscribeToOrderbook(depth: OrderbookDepth.lvl500, symbol: "BTCUSDT", category: Category.linear);
+  // final s2 = bybit.subscribeToKlines(interval: TimeInterval.fifteenMinutes, symbol: "BTCUSDT", category: Category.linear);
+  // final s = bybit.subscribeToOrderbook(depth: OrderbookDepth.lvl500, symbol: "BTCUSDT", category: Category.linear);
+  // final s = bybit.subscribeToPosition();
+  final s = bybit.subscribeToPositionUpdates(category: Category.linear);
   s.stream.listen((data) {
-    print("kline ${data.data.asks.first.price}");
+    print("order ${data.data.first.unrealisedPnl}");
   });
 
-  await Future.delayed(Duration(seconds: 10));
+  await Future.delayed(Duration(minutes: 2));
+
+  // final ids = await bybit.placeOrder(
+  //   category: Category.linear,
+  //   symbol: "BTCUSDT",
+  //   side: Side.buy,
+  //   orderType: OrderType.limit,
+  //   qty: "0.001",
+  //   price: "69000",
+  // );
+  // await Future.delayed(Duration(seconds: 5));
+
+  // await bybit.cancelAllOrders(category: Category.linear, symbol: "BTCUSDT");
+
+  // await Future.delayed(Duration(seconds: 5));
 
   bybit.unsubscribeFromTopic(s.topic);
 
   await Future.delayed(Duration(seconds: 5));
-
   // bybit.disconnectWs();
 
   // print(time.toString());
