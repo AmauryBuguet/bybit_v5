@@ -136,7 +136,6 @@ class BybitApi {
     }
     _wsChannel!.stream.listen((data) {
       Map<String, dynamic> json = jsonDecode(data);
-      log(json.toString());
       if (json.containsKey("topic")) {
         _controller.add(json);
       } else {
@@ -438,7 +437,6 @@ class BybitApi {
     };
 
     final response = await _sendRequest('/v5/market/instruments-info', body: queryParams);
-    print(response);
     return InstrumentsResponse.fromMap(response);
   }
 
@@ -996,7 +994,6 @@ class BybitApi {
     };
 
     final response = await _sendRequest('/v5/account/fee-rate', body: queryParams, signed: true);
-    print(response);
     return List<FeeRate>.from((response["list"] as List<dynamic>).map((e) => FeeRate.fromMap(e)));
   }
 }
