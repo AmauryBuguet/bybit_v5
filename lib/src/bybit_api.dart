@@ -11,6 +11,7 @@ import 'models/classes/closed_pnl_response.dart';
 import 'models/classes/fee_rate.dart';
 import 'models/classes/instruments_response.dart';
 import 'models/classes/kline.dart';
+import 'models/classes/long_short_ratio.dart';
 import 'models/classes/open_interest.dart';
 import 'models/classes/order_ids.dart';
 import 'models/classes/orders_list_response.dart';
@@ -522,6 +523,30 @@ class BybitApi {
 
     final response = await _sendRequest('/v5/market/open-interest', body: queryParams);
     return (response["list"] as List<dynamic>).map((data) => OpenInterest.fromMap(data)).toList();
+  }
+
+  /// Get the long short ratio of a [symbol].
+  ///
+  /// This method does not require authentication.
+  ///
+  /// Max [limit] is 500, defaults to 50
+  ///
+  /// For more information, refer to the [Bybit API documentation](https://bybit-exchange.github.io/docs/v5/market/long-short-ratio).
+  Future<List<LongShortRatio>> getLongShortRatio({
+    required Category category,
+    required String symbol,
+    required IntervalTime period,
+    int? limit,
+  }) async {
+    final queryParams = {
+      'category': category.name,
+      'symbol': symbol.toUpperCase(),
+      'period': period.json,
+      if (limit != null) 'limit': limit.toString(),
+    };
+
+    final response = await _sendRequest('/v5/market/account-ratio', body: queryParams);
+    return (response["list"] as List<dynamic>).map((data) => LongShortRatio.fromMap(data)).toList();
   }
 
   /// This endpoint supports to create the order for spot, spot margin, USDT perpetual, USDC perpetual, USDC futures, inverse futures and options.

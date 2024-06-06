@@ -12,6 +12,7 @@ export 'src/models/classes/fee_rate.dart';
 export 'src/models/classes/instrument_info.dart';
 export 'src/models/classes/instruments_response.dart';
 export 'src/models/classes/kline.dart';
+export 'src/models/classes/long_short_ratio.dart';
 export 'src/models/classes/open_interest.dart';
 export 'src/models/classes/order.dart';
 export 'src/models/classes/order_ids.dart';
