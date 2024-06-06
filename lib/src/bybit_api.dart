@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:developer';
 
-import 'package:bybit_v5/src/models/classes/ws_wallet.dart';
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/io.dart';
@@ -12,6 +11,7 @@ import 'models/classes/closed_pnl_response.dart';
 import 'models/classes/fee_rate.dart';
 import 'models/classes/instruments_response.dart';
 import 'models/classes/kline.dart';
+import 'models/classes/open_interest.dart';
 import 'models/classes/order_ids.dart';
 import 'models/classes/orders_list_response.dart';
 import 'models/classes/position_list_response.dart';
@@ -25,10 +25,12 @@ import 'models/classes/ws_order.dart';
 import 'models/classes/ws_orderbook.dart';
 import 'models/classes/ws_position.dart';
 import 'models/classes/ws_trade.dart';
+import 'models/classes/ws_wallet.dart';
 import 'models/enums/account_type.dart';
 import 'models/enums/category.dart';
 import 'models/enums/connect_status.dart';
 import 'models/enums/instrument_status.dart';
+import 'models/enums/interval_time.dart';
 import 'models/enums/market_unit.dart';
 import 'models/enums/option_type.dart';
 import 'models/enums/order_filter.dart';
@@ -379,7 +381,7 @@ class BybitApi {
     return DateTime.fromMicrosecondsSinceEpoch(microseconds);
   }
 
-  /// Fetches the server time from the Bybit API.
+  /// Query for historical klines (also known as candles/candlesticks). Charts are returned in groups based on the requested interval.
   ///
   /// This method does not require authentication.
   ///
@@ -490,6 +492,36 @@ class BybitApi {
     final response = await _sendRequest('/v5/market/recent-trade', body: queryParams);
     final List<dynamic> tradeList = response['list'];
     return tradeList.map((tradeData) => Trade.fromMap(tradeData)).toList();
+  }
+
+  /// Get the open interest of each symbol.
+  ///
+  /// This method does not require authentication.
+  ///
+  /// Max [limit] is 200, defaults to 50
+  ///
+  /// For more information, refer to the [Bybit API documentation](https://bybit-exchange.github.io/docs/v5/market/open-interest).
+  Future<List<OpenInterest>> getOpenInterest({
+    required Category category,
+    required String symbol,
+    required IntervalTime interval,
+    int? startTime,
+    int? endTime,
+    int? limit,
+    String? cursor,
+  }) async {
+    final queryParams = {
+      'category': category.name,
+      'symbol': symbol.toUpperCase(),
+      'intervalTime': interval.json,
+      if (startTime != null) 'startTime': startTime.toString(),
+      if (endTime != null) 'endTime': endTime.toString(),
+      if (limit != null) 'limit': limit.toString(),
+      if (cursor != null) 'cursor': cursor,
+    };
+
+    final response = await _sendRequest('/v5/market/open-interest', body: queryParams);
+    return (response["list"] as List<dynamic>).map((data) => OpenInterest.fromMap(data)).toList();
   }
 
   /// This endpoint supports to create the order for spot, spot margin, USDT perpetual, USDC perpetual, USDC futures, inverse futures and options.

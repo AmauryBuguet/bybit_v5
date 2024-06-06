@@ -10,6 +10,9 @@ void main() async {
   final apiKey = env["API_KEY"];
   final apiSecret = env["API_SECRET"];
   final bybit = BybitApi.authenticated(apiKey: apiKey, apiSecret: apiSecret);
+  final r = await bybit.getOpenInterest(category: Category.linear, symbol: "BTCUSDT", interval: IntervalTime.fifteenMinutes);
+  print(r.first.value);
+  return;
   // print('auth: ${bybit.isAuthenticated}');
   // final time = await bybit.getServerTime();
   // final s2 = bybit.subscribeToKlines(interval: TimeInterval.fifteenMinutes, symbol: "BTCUSDT", category: Category.linear);
