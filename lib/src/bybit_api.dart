@@ -71,7 +71,10 @@ class BybitApi {
   IOWebSocketChannel? _wsChannel;
 
   /// list of currently subscribed topics
-  List<String> _topics = [];
+  final List<String> _topics = [];
+
+  /// list of topics whose subscription has not been confirmed yet
+  final List<String> _pendingTopics = [];
 
   /// Indicates if the websocket connection has been made already
   ConnectStatus _connectStatus = ConnectStatus.disconnected;
@@ -143,6 +146,7 @@ class BybitApi {
           if (json["success"]) {
             final topic = (json["req_id"] as String).split("/").first;
             _topics.add(topic);
+            _pendingTopics.remove(topic);
             log("Subscribed to $topic");
           }
         } else if (json["op"] == "unsubscribe") {
@@ -151,8 +155,7 @@ class BybitApi {
             _topics.remove(topic);
             log("Unsubscribed from $topic");
             if (_topics.isEmpty) {
-              log("No more active topics, disconnecting...");
-              disconnectWs();
+              checkForActiveTopics();
             }
           }
         } else if (json["op"] == "auth") {
@@ -170,6 +173,14 @@ class BybitApi {
     _connectStatus = ConnectStatus.connected;
   }
 
+  Future<void> checkForActiveTopics() async {
+    await Future.delayed(Duration(seconds: 3));
+    if (_topics.isEmpty && _pendingTopics.isEmpty) {
+      log("No more active or pending topics, disconnecting...");
+      disconnectWs();
+    }
+  }
+
   Future<void> _subscribeToTopic(String topic, String url, {int retries = 0, bool signed = false}) async {
     if (retries >= 3) {
       log("too many retries, canceling ...");
@@ -180,6 +191,7 @@ class BybitApi {
         throw Exception("Can't connect to a different endpoint, make another instance of BybitApi");
       }
       log("subscribing to $topic");
+      _pendingTopics.add(topic);
       final obj = {
         "op": "subscribe",
         "req_id": "$topic/${DateTime.now().millisecondsSinceEpoch}",
@@ -386,6 +398,8 @@ class BybitApi {
   /// This method does not require authentication.
   ///
   /// The [Category] can be [Category.spot], [Category.linear] or [Category.inverse], it default to [Category.linear].
+  ///
+  /// Max [limit] is 1000, defaults to 200 if not provided
   ///
   /// For more information, refer to the [Bybit API documentation](https://bybit-exchange.github.io/docs/v5/market/kline).
   Future<List<Kline>> getKlines({
