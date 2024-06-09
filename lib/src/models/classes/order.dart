@@ -1,3 +1,4 @@
+import '../enums/category.dart';
 import '../enums/market_unit.dart';
 import '../enums/order_status.dart';
 import '../enums/order_type.dart';
@@ -10,6 +11,7 @@ import '../enums/trigger_by.dart';
 import '../enums/trigger_direction.dart';
 
 class Order {
+  final Category? category;
   final String orderId;
   final String? orderLinkId;
   final String? blockTradeId;
@@ -17,7 +19,7 @@ class Order {
   final double price;
   final double qty;
   final Side side;
-  final String? isLeverage;
+  final bool? isLeverage;
   final PositionIdx positionIdx;
   final OrderStatus orderStatus;
   final String? createType;
@@ -56,6 +58,7 @@ class Order {
   final int updatedTime;
 
   Order({
+    required this.category,
     required this.orderId,
     required this.orderLinkId,
     required this.blockTradeId,
@@ -104,6 +107,7 @@ class Order {
 
   factory Order.fromMap(Map<String, dynamic> map) {
     return Order(
+      category: Category.tryFromString(map["category"]),
       orderId: map['orderId'],
       orderLinkId: map['orderLinkId'],
       blockTradeId: map['blockTradeId'],
@@ -111,7 +115,7 @@ class Order {
       price: double.tryParse(map['price']) ?? 0.0,
       qty: double.tryParse(map['qty']) ?? 0.0,
       side: Side.fromString(map['side']),
-      isLeverage: map['isLeverage'],
+      isLeverage: map['isLeverage'] == "1",
       positionIdx: PositionIdx.fromInt(map['positionIdx']),
       orderStatus: OrderStatus.fromString(map['orderStatus']),
       createType: map['createType'],

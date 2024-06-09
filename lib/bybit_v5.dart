@@ -1,6 +1,8 @@
-/// Support for doing something awesome.
+/// Interface for Bybit API
 ///
-/// More dartdocs go here.
+/// Supports REST and Websockets for public and private calls
+///
+/// For more information, refer to the [Bybit API documentation](https://bybit-exchange.github.io/docs/v5/intro).
 library bybit_v5;
 
 export 'src/bybit_api.dart';

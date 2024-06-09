@@ -845,9 +845,7 @@ class BybitApi {
   ///
   /// This method requires authentication.
   ///
-  /// Unified account covers: USDT perpetual / USDC contract / Inverse contract / Options
-  ///
-  /// Classic account covers: USDT perpetual / Inverse contract
+  /// Will return an empty position if there are no current positions
   ///
   /// For more information, refer to the [Bybit API documentation](https://bybit-exchange.github.io/docs/v5/position).
   Future<PositionListResponse> getPositionInfo({

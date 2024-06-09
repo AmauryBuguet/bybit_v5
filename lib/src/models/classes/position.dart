@@ -1,8 +1,10 @@
+import '../enums/category.dart';
 import '../enums/position_idx.dart';
 import '../enums/side.dart';
 import '../enums/tpsl_mode.dart';
 
 class Position {
+  final Category? category;
   final PositionIdx positionIdx;
   final int riskId;
   final String riskLimitValue;
@@ -14,8 +16,9 @@ class Position {
   final int tradeMode;
   final String positionStatus;
   final int autoAddMargin;
-  final int adlRankIndicator;
-  final int? leverage;
+  final int? adlRankIndicator;
+  final double? leverage;
+  final double? sessionAvgPrice;
   final double positionBalance;
   final double markPrice;
   final double? liqPrice;
@@ -30,13 +33,14 @@ class Position {
   final double curRealisedPnl;
   final double cumRealisedPnl;
   final int seq;
-  final bool isReduceOnly;
+  final bool? isReduceOnly;
   final int? mmrSysUpdatedTime;
   final int? leverageSysUpdatedTime;
   final int createdTime;
   final int updatedTime;
 
   Position({
+    required this.category,
     required this.positionIdx,
     required this.riskId,
     required this.riskLimitValue,
@@ -51,6 +55,7 @@ class Position {
     required this.adlRankIndicator,
     required this.leverage,
     required this.positionBalance,
+    required this.sessionAvgPrice,
     required this.markPrice,
     required this.liqPrice,
     required this.bustPrice,
@@ -73,20 +78,26 @@ class Position {
 
   factory Position.fromMap(Map<String, dynamic> map) {
     return Position(
+      category: Category.tryFromString(map["category"]),
       positionIdx: PositionIdx.fromInt(map['positionIdx']),
       riskId: map['riskId'] as int,
       riskLimitValue: map['riskLimitValue'] as String,
       symbol: map['symbol'] as String,
       side: Side.tryFromString(map['side']),
       size: double.tryParse(map['size']) ?? 0.0,
-      avgPrice: double.tryParse(map['avgPrice']) ?? 0.0,
+      avgPrice: map.containsKey('avgPrice')
+          ? double.parse(map['avgPrice'])
+          : map.containsKey('entryPrice')
+              ? double.parse(map['entryPrice'])
+              : 0.0,
       positionValue: double.tryParse(map['positionValue']) ?? 0.0,
       tradeMode: map['tradeMode'] as int,
       positionStatus: map['positionStatus'] as String,
       autoAddMargin: map['autoAddMargin'] as int,
-      adlRankIndicator: map['adlRankIndicator'] as int,
-      leverage: int.tryParse(map['leverage']),
+      adlRankIndicator: map['adlRankIndicator'],
+      leverage: double.tryParse(map['leverage']),
       positionBalance: double.parse(map['positionBalance']),
+      sessionAvgPrice: double.tryParse(map["sessionAvgPrice"] ?? ""),
       markPrice: double.parse(map['markPrice']),
       liqPrice: double.tryParse(map['liqPrice']),
       bustPrice: double.tryParse(map['bustPrice']),
@@ -100,9 +111,9 @@ class Position {
       curRealisedPnl: double.parse(map['curRealisedPnl']),
       cumRealisedPnl: double.parse(map['cumRealisedPnl']),
       seq: map['seq'] as int,
-      isReduceOnly: map['isReduceOnly'] as bool,
-      mmrSysUpdatedTime: int.tryParse(map['mmrSysUpdatedTime']),
-      leverageSysUpdatedTime: int.tryParse(map['leverageSysUpdatedTime']),
+      isReduceOnly: map['isReduceOnly'],
+      mmrSysUpdatedTime: int.tryParse(map['mmrSysUpdatedTime'] ?? ""),
+      leverageSysUpdatedTime: int.tryParse(map['leverageSysUpdatedTime'] ?? ""),
       createdTime: int.parse(map['createdTime']),
       updatedTime: int.parse(map['updatedTime']),
     );
