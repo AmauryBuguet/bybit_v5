@@ -294,7 +294,10 @@ class BybitApi {
     final topic = category != null ? "order.${category.name}" : "order";
     _subscribeToTopic(topic, "wss://stream.bybit.com/v5/private", signed: true);
     return Subscription(
-      stream: _controller.stream.where((e) => e["topic"] == topic).map((e) => WsOrderMessage.fromMap(e)),
+      stream: _controller.stream.where((e) => e["topic"] == topic).map((e) {
+        print(e);
+        return WsOrderMessage.fromMap(e);
+      }),
       topic: topic,
     );
   }
