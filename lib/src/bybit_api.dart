@@ -311,7 +311,10 @@ class BybitApi {
     final topic = "wallet";
     _subscribeToTopic(topic, "wss://stream.bybit.com/v5/private", signed: true);
     return Subscription(
-      stream: _controller.stream.where((e) => e["topic"] == topic).map((e) => WsWalletMessage.fromMap(e)),
+      stream: _controller.stream.where((e) => e["topic"] == topic).map((e) {
+        print(e);
+        return WsWalletMessage.fromMap(e);
+      }),
       topic: topic,
     );
   }
