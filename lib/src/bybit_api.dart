@@ -64,6 +64,9 @@ class BybitApi {
   /// Current ws endpoint used
   String? _currWsUrl;
 
+  /// timer for ping packets
+  Timer? _timer;
+
   /// stream controller that can be listened to more than once
   final StreamController<Map<String, dynamic>> _controller = StreamController<Map<String, dynamic>>.broadcast();
 
@@ -96,6 +99,14 @@ class BybitApi {
       : isAuthenticated = false,
         apiKey = null,
         apiSecret = null;
+
+  /// Ping packet as specified in bybit API docs
+  ///
+  /// Must be sent every 20 seconds
+  void _sendPing(Timer timer) {
+    final Map<String, dynamic> obj = {"op": "ping"};
+    _wsChannel!.sink.add(jsonEncode(obj));
+  }
 
   /// Creates an authenticated instance of the Bybit API client.
   ///
@@ -164,12 +175,17 @@ class BybitApi {
           } else {
             log("Auth failed");
           }
+        } else if (json["op"] == "ping" || json["op"] == "pong") {
+          log("ping received");
         } else {
           log(json.toString());
         }
       }
     });
     log("ws connected");
+    // start ping timer
+    _timer?.cancel();
+    _timer = Timer.periodic(Duration(seconds: 20), _sendPing);
     _connectStatus = ConnectStatus.connected;
   }
 
@@ -221,6 +237,8 @@ class BybitApi {
 
   /// Close websocket connection
   void disconnectWs() {
+    // cancel ping timer
+    _timer?.cancel();
     log("ws disconnected");
     _wsChannel?.sink.close();
     _connectStatus = ConnectStatus.disconnected;
