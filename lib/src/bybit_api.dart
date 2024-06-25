@@ -176,9 +176,8 @@ class BybitApi {
             log("Auth failed");
           }
         } else if (json["op"] == "ping" || json["op"] == "pong") {
-          log("ping received");
         } else {
-          log(json.toString());
+          log("unknown message : ${json.toString()}");
         }
       }
     });
@@ -298,10 +297,7 @@ class BybitApi {
     final topic = category != null ? "position.${category.name}" : "position";
     _subscribeToTopic(topic, "wss://stream.bybit.com/v5/private", signed: true);
     return Subscription(
-      stream: _controller.stream.where((e) => e["topic"] == topic).map((e) {
-        print(e);
-        return WsPositionMessage.fromMap(e);
-      }),
+      stream: _controller.stream.where((e) => e["topic"] == topic).map((e) => WsPositionMessage.fromMap(e)),
       topic: topic,
     );
   }
@@ -315,10 +311,7 @@ class BybitApi {
     final topic = category != null ? "order.${category.name}" : "order";
     _subscribeToTopic(topic, "wss://stream.bybit.com/v5/private", signed: true);
     return Subscription(
-      stream: _controller.stream.where((e) => e["topic"] == topic).map((e) {
-        print(e);
-        return WsOrderMessage.fromMap(e);
-      }),
+      stream: _controller.stream.where((e) => e["topic"] == topic).map((e) => WsOrderMessage.fromMap(e)),
       topic: topic,
     );
   }
